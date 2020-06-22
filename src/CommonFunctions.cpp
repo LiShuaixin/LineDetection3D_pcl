@@ -250,19 +250,32 @@ void PCAFunctions::Ori_PCA( pcl::PointCloud<PointT>::Ptr cloud_ptr, int k, std::
 
 	// 
 	pcaInfos[i].idxAll.resize( ki );
+	std::vector<double> scalesTemp(ki);
 	for ( int j =0; j<ki; ++j )
 	{
 	    int idx = point_search_ind[i][j];
 	    pcaInfos[i].idxAll[j] = idx;
+	    
+	    dx = cloud_ptr->points[idx].x - cloud_ptr->points[i].x;
+	    dy = cloud_ptr->points[idx].y - cloud_ptr->points[i].y;
+	    dz = cloud_ptr->points[idx].z - cloud_ptr->points[i].z;
+	    scalesTemp[j] = sqrt(dx*dx + dy*dy + dz*dz);
 	}
 
-	int idx = point_search_ind[i][3];
-	dx = cloud_ptr->points[idx].x - cloud_ptr->points[i].x;
-	dy = cloud_ptr->points[idx].y - cloud_ptr->points[i].y;
-	dz = cloud_ptr->points[idx].z - cloud_ptr->points[i].z;
-	double scaleTemp = sqrt(dx*dx + dy*dy + dz*dz);
-	pcaInfos[i].scale = scaleTemp;
-	scale += scaleTemp;
+	std::vector<double> sortedScales( scalesTemp.begin(), scalesTemp.end() );
+        double medianScale = meadian( sortedScales );
+        std::vector<double>().swap( sortedScales );
+	
+	pcaInfos[i].scale = medianScale;
+	scale += medianScale;
+	
+// 	int idx = point_search_ind[i][3];
+// 	dx = cloud_ptr->points[idx].x - cloud_ptr->points[i].x;
+// 	dy = cloud_ptr->points[idx].y - cloud_ptr->points[i].y;
+// 	dz = cloud_ptr->points[idx].z - cloud_ptr->points[i].z;
+// 	double scaleTemp = sqrt(dx*dx + dy*dy + dz*dz);
+// 	pcaInfos[i].scale = scaleTemp;
+// 	scale += scaleTemp;
 
 	double t = h_cov_evals.row(0).val[0] + h_cov_evals.row(1).val[0] + h_cov_evals.row(2).val[0] + ( rand()%10 + 1 ) * MINVALUE;
 	pcaInfos[i].lambda0 = h_cov_evals.row(2).val[0] / t; /// the ration that the smallest eigen value over the sum of all eigens
@@ -279,9 +292,7 @@ void PCAFunctions::Ori_PCA( pcl::PointCloud<PointT>::Ptr cloud_ptr, int k, std::
 void PCAFunctions::PCASingle( pcl::PointCloud<PointT>::Ptr cloud_ptr, PCAInfo &pcaInfo )
 {
     int i, j;
-    int k = cloud_ptr->size();
-    double a = 1.4826;
-    double thRz = 2.5;
+    int k = cloud_ptr->size(); // region points size
 
     // 
     pcaInfo.idxIn.resize( k );
@@ -308,7 +319,6 @@ void PCAFunctions::PCASingle( pcl::PointCloud<PointT>::Ptr cloud_ptr, PCAInfo &p
 
     // 
     pcaInfo.idxAll = pcaInfo.idxIn;
-    //pcaInfo.lambda0 = h_cov_evals.row(2).val[0];
     pcaInfo.lambda0 = h_cov_evals.row(2).val[0] / ( h_cov_evals.row(0).val[0] + h_cov_evals.row(1).val[0] + h_cov_evals.row(2).val[0] ); /// normalized smallest eigenvalue
     pcaInfo.normal  = h_cov_evectors.row(2).t();
     pcaInfo.planePt = h_mean; // central point
@@ -339,7 +349,7 @@ void PCAFunctions::MCMD_OutlierRemoval( pcl::PointCloud<PointT>::Ptr cloud_ptr, 
 	cv::Matx31d pt( cloud_ptr->points[idx].x, cloud_ptr->points[idx].y, cloud_ptr->points[idx].z );
 	cv::Matx<double, 1, 1> OD_mat = ( pt - h_mean ).t() * pcaInfo.normal;
 	double OD = fabs( OD_mat.val[0] );
-	ODs[j] = OD;
+	ODs[j] = OD; // distance to the fitting plane
     }
 
     // calculate the Rz-score for all points using ODs
@@ -383,4 +393,202 @@ double PCAFunctions::meadian( std::vector<double> dataset )
     {
 	return (dataset[dataset.size()/2] + dataset[dataset.size()/2 + 1])/2.0;
     }
+}
+
+void PointCloudFunctions::getMinMax3D(const pcl::PointCloud<PointT> &cloud, const std::vector<int> &indices,
+		                      Eigen::Vector4f &min_pt, Eigen::Vector4f &max_pt)
+{
+    Eigen::Array4f min_p, max_p;
+    min_p.setConstant (FLT_MAX);
+    max_p.setConstant (-FLT_MAX);
+    
+    for (std::vector<int>::const_iterator it = indices.begin (); it != indices.end (); ++it)
+    {
+	// Get the distance value
+	const uint8_t* pt_data = reinterpret_cast<const uint8_t*> (&cloud.points[*it]);
+
+	// Create the point structure and get the min/max
+	pcl::Array4fMapConst pt = cloud.points[*it].getArray4fMap ();
+	min_p = min_p.min(pt);
+	max_p = max_p.max(pt);
+    }
+    
+    min_pt = min_p;
+    max_pt = max_p;
+}
+    
+void PointCloudFunctions::approximateVoxelGridFilter(pcl::PointCloud<PointT>::Ptr input_, const double& leaf_size_,
+			                             pcl::PointCloud<PointT> &output)
+{
+    ///< initial compute -> pcl_base
+    boost::shared_ptr <std::vector<int> > indices_(new std::vector<int>); // indices for the input point cloud
+    Eigen::Vector3f inverse_leaf_size_( 1/leaf_size_, 1/leaf_size_, 1/leaf_size_);
+    Eigen::Vector4i min_b_, max_b_, div_b_, divb_mul_;
+    
+    // Check if input was set
+    if (input_->empty()) {
+	PCL_ERROR ("[initCompute] Failed with no input point cloud!\n");
+	return;
+    };
+
+    // If no point indices have been given, construct a set of indices for the entire input point cloud
+    if (indices_->empty())
+    {
+	indices_.reset (new std::vector<int>);
+	try
+	{
+	    indices_->resize (input_->points.size ());
+	}
+	catch (const std::bad_alloc&)
+	{
+	    PCL_ERROR ("[initCompute] Failed to allocate %lu indices.\n", input_->points.size ());
+	}
+	for (size_t i = 0; i < indices_->size (); ++i) { (*indices_)[i] = static_cast<int>(i); }
+    }
+    ///< End of initial compute
+    
+    ///< apply filter -> voxel frid
+    // Has the input dataset been set already?
+    if (!input_)
+    {
+	PCL_WARN ("[pcl::%s::applyFilter] No input dataset given!\n");
+	output.width = output.height = 0;
+	output.points.clear ();
+	return;
+    }
+
+    // Copy the header (and thus the frame_id) + allocate enough space for points
+    output.height       = 1;                    // downsampling breaks the organized structure
+    output.is_dense     = true;                 // we filter out invalid points
+
+    Eigen::Vector4f min_p, max_p;
+    // Get the minimum and maximum dimensions
+    getMinMax3D(*input_, *indices_, min_p, max_p);
+
+    // Check that the leaf size is not too small, given the size of the data
+    int64_t dx = static_cast<int64_t>((max_p[0] - min_p[0]) * inverse_leaf_size_[0])+1;
+    int64_t dy = static_cast<int64_t>((max_p[1] - min_p[1]) * inverse_leaf_size_[1])+1;
+    int64_t dz = static_cast<int64_t>((max_p[2] - min_p[2]) * inverse_leaf_size_[2])+1;
+
+    if ((dx*dy*dz) > static_cast<int64_t>(std::numeric_limits<int32_t>::max()))
+    {
+	PCL_WARN("[pcl::applyFilter] Leaf size is too small for the input dataset. Integer indices would overflow.\n");
+	output = *input_;
+	return;
+    }
+
+    // Compute the minimum and maximum bounding box values
+    min_b_[0] = static_cast<int> (floor (min_p[0] * inverse_leaf_size_[0]));
+    max_b_[0] = static_cast<int> (floor (max_p[0] * inverse_leaf_size_[0]));
+    min_b_[1] = static_cast<int> (floor (min_p[1] * inverse_leaf_size_[1]));
+    max_b_[1] = static_cast<int> (floor (max_p[1] * inverse_leaf_size_[1]));
+    min_b_[2] = static_cast<int> (floor (min_p[2] * inverse_leaf_size_[2]));
+    max_b_[2] = static_cast<int> (floor (max_p[2] * inverse_leaf_size_[2]));
+
+    // Compute the number of divisions needed along all axis
+    div_b_ = max_b_ - min_b_ + Eigen::Vector4i::Ones ();
+    div_b_[3] = 0;
+
+    // Set up the division multiplier
+    divb_mul_ = Eigen::Vector4i (1, div_b_[0], div_b_[0] * div_b_[1], 0);
+
+    // Storage for mapping leaf and pointcloud indexes
+    std::vector<CloudPointIndexIdx> index_vector;
+    index_vector.reserve (indices_->size ());
+    
+    // No distance filtering, process all data
+    // First pass: go over all points and insert them into the index_vector vector
+    // with calculated idx. Points with the same idx value will contribute to the
+    // same point of resulting CloudPoint
+    for (std::vector<int>::const_iterator it = indices_->begin (); it != indices_->end (); ++it)
+    {
+	// Check if the point is invalid
+	if (!input_->is_dense)
+	    if (!pcl_isfinite (input_->points[*it].x) || !pcl_isfinite (input_->points[*it].y) || !pcl_isfinite (input_->points[*it].z))
+		continue;
+
+	int ijk0 = static_cast<int>(floor(input_->points[*it].x * inverse_leaf_size_[0]) - static_cast<float> (min_b_[0]));
+	int ijk1 = static_cast<int>(floor(input_->points[*it].y * inverse_leaf_size_[1]) - static_cast<float> (min_b_[1]));
+	int ijk2 = static_cast<int>(floor(input_->points[*it].z * inverse_leaf_size_[2]) - static_cast<float> (min_b_[2]));
+
+	// Compute the centroid leaf index
+	int idx = ijk0 * divb_mul_[0] + ijk1 * divb_mul_[1] + ijk2 * divb_mul_[2];
+	index_vector.push_back (CloudPointIndexIdx (static_cast<unsigned int> (idx), *it));
+    }
+
+    // Second pass: sort the index_vector vector using value representing target cell as index
+    // in effect all points belonging to the same output cell will be next to each other
+    std::sort (index_vector.begin (), index_vector.end (), std::less<CloudPointIndexIdx> ());
+    
+    // Third pass: count output cells
+    // we need to skip all the same, adjacenent idx values
+    unsigned int total = 0;
+    unsigned int index = 0;
+    
+    // first_and_last_indices_vector[i] represents the index in index_vector of the first point in
+    // index_vector belonging to the voxel which corresponds to the i-th output point,
+    // and of the first point not belonging to.
+    std::vector<std::pair<unsigned int, unsigned int> > first_and_last_indices_vector;
+    
+    // Worst case size
+    first_and_last_indices_vector.reserve (index_vector.size ());
+    while (index < index_vector.size ()) 
+    {
+	unsigned int i = index + 1;
+	while (i < index_vector.size () && index_vector[i].idx == index_vector[index].idx) 
+	    ++i;
+	if (i - index >= 0)
+	{
+	    ++total;
+	    first_and_last_indices_vector.push_back (std::pair<unsigned int, unsigned int> (index, i));
+	}
+	index = i;
+    }
+
+    // Fourth pass: compute centroids, insert them into their final position
+    output.points.resize (total);
+    
+    index = 0;
+    for (unsigned int cp = 0; cp < first_and_last_indices_vector.size (); ++cp)
+    {
+	// calculate centroid - sum values from all input points, that have the same idx value in index_vector array
+	unsigned int first_index = first_and_last_indices_vector[cp].first;
+	unsigned int last_index = first_and_last_indices_vector[cp].second;
+
+	pcl::CentroidPoint<pcl::PointXYZ> centroid;
+
+	// fill in the accumulator with leaf points
+	for (unsigned int li = first_index; li < last_index; ++li) {
+	    pcl::PointXYZ pt;
+	    pt.x = input_->points[index_vector[li].cloud_point_index].x;
+	    pt.y = input_->points[index_vector[li].cloud_point_index].y;
+	    pt.z = input_->points[index_vector[li].cloud_point_index].z;
+	    centroid.add (pt);  
+	}
+
+	pcl::PointXYZ cen;
+	centroid.get (cen);
+	
+	///< search for the closest point to the centroid
+	double dis = -1;
+	int idx;
+	for (unsigned int li = first_index; li < last_index; ++li) {
+	    Eigen::Vector3d pt; 
+	    pt(0) = input_->points[index_vector[li].cloud_point_index].x;
+	    pt(1) = input_->points[index_vector[li].cloud_point_index].y;
+	    pt(2) = input_->points[index_vector[li].cloud_point_index].z;
+	    
+	    double d = (pt - Eigen::Vector3d(cen.x, cen.y, cen.z)).norm();
+	    
+	    if(dis == -1 || d < dis) {
+		dis = d;
+		idx = index_vector[li].cloud_point_index;
+	    }
+	}
+	output.points[index] = input_->points[idx];
+
+	++index;
+    }
+    
+    output.width = static_cast<uint32_t> (output.points.size ());
 }

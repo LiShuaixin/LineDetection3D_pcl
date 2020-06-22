@@ -1,9 +1,15 @@
 #include <stdio.h>
 #include <fstream>
 
-#include "pcl/point_types.h"
-#include "pcl/point_cloud.h"
-#include "pcl/io/pcd_io.h"
+#include <pcl/filters/filter.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/segmentation/region_growing.h>
+#include <pcl/kdtree/kdtree.h>
+#include <pcl/common/time.h>
+#include <pcl/console/parse.h>
 
 #include "LineDetection3D.h"
 #include "nanoflann.hpp"
@@ -61,6 +67,7 @@ void readDataFromPCDFile( std::string filepath, pcl::PointCloud<PointT>::Ptr clo
 	return ;
     }
 
+    pcl::copyPointCloud(*pcl_cloud, *cloud);
     std::cout << "Total num of points: " << cloud->size() << "\n";
 }
 
@@ -149,18 +156,87 @@ int main(int argc, char** argv)
 	readDataFromPCDFile( fileData, pointData );
     }
 
+    /// random downsize
+    int maxSize = 1200000;
+    if (pointData->size() > maxSize) {
+	pcl::RandomSample<PointT> rs;
+	rs.setInputCloud(pointData);
+	rs.setSample(maxSize);
+	
+	pcl::PointCloud<PointT>::Ptr pointDataTemp(new pcl::PointCloud<PointT>());
+	rs.filter(*pointDataTemp);   
+	pointData = pointDataTemp;
+	std::cout << "Total num of points after downsampling: " << pointData->size() << "\n";
+	pcl::io::savePCDFile(fileOut + "orginal.pcd", *pointData);	
+    }
 
-    int k = 20;
-    LineDetection3D detector;
-    std::vector<PLANE> planes;
-    std::vector<std::vector<cv::Point3d> > lines;
-    std::vector<double> ts;
-    detector.run( pointData, k, planes, lines, ts );
-    cout<<"lines number: "<<lines.size()<<endl;
-    cout<<"planes number: "<<planes.size()<<endl;
+//     PointCloudFunctions PTFunc;
+//     pcl::PointCloud<PointT>::Ptr pointDataTemp(new pcl::PointCloud<PointT>());
+//     PTFunc.approximateVoxelGridFilter(pointData, 0.04, *pointDataTemp);
+//     pointData = pointDataTemp;
+//     std::cout << "Total num of points after downsampling: " << pointData->size() << "\n";
+//     pcl::io::savePCDFile(fileOut + "orginal.pcd", *pointData);
+
+//     int k = 20;
+//     LineDetection3D detector;
+//     std::vector<PLANE> planes;
+//     std::vector<std::vector<cv::Point3d> > lines;
+//     std::vector<double> ts;
+//     detector.run( pointData, k, planes, lines, ts );
+//     cout<<"lines number: "<<lines.size()<<endl;
+//     cout<<"planes number: "<<planes.size()<<endl;
+//     
+//     writeOutPlanes( fileOut, planes, detector.scale );
+//     writeOutLines( fileOut, lines, detector.scale );
+//     pcl::io::savePCDFile(fileOut + "planes.pcd", *detector.planePoints);
+
+    // Estimate the normals
+    pcl::NormalEstimation<PointT, pcl::Normal> ne;
+    ne.setInputCloud (pointData);
+    pcl::search::KdTree<PointT>::Ptr tree_n (new pcl::search::KdTree<PointT>());
+    ne.setSearchMethod (tree_n);
+    ne.setRadiusSearch (0.03);
     
-    writeOutPlanes( fileOut, planes, detector.scale );
-    writeOutLines( fileOut, lines, detector.scale );
+    pcl::PointCloud<pcl::Normal>::Ptr cloud_normals (new pcl::PointCloud<pcl::Normal>());
+    ne.compute (*cloud_normals);
+    pcl::console::print_highlight ("Normals are computed and size is %lu\n", cloud_normals->points.size ());
+
+    // Region growing
+    pcl::RegionGrowing<PointT, pcl::Normal> rg;
+    rg.setSmoothModeFlag (false); // Depends on the cloud being processed
+    rg.setInputCloud (pointData);
+    rg.setInputNormals (cloud_normals);
+
+    std::vector <pcl::PointIndices> clusters;
+    pcl::StopWatch watch;
+    rg.extract (clusters);
+    pcl::console::print_highlight ("Extraction time: %f\n", watch.getTimeSeconds());
+    
+    // Writing the resulting cloud into a pcd file
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud_segmented (new pcl::PointCloud<pcl::PointXYZRGB>());
+    cloud_segmented = rg.getColoredCloud ();
+    
+    pcl::PCDWriter writer;
+    pcl::console::print_highlight ("Number of segments done is %lu\n", clusters.size ());
+    writer.write<pcl::PointXYZRGB> (fileOut + "segment_result.pcd", *cloud_segmented, false);
+
+    if (pcl::console::find_switch (argc, argv, "-dump"))
+    {
+	pcl::console::print_highlight ("Writing clusters to clusters.dat\n");
+	std::ofstream clusters_file;
+	clusters_file.open ("clusters.dat");
+	for (std::size_t i = 0; i < clusters.size (); ++i)
+	{
+	clusters_file << i << "#" << clusters[i].indices.size () << ": ";
+	std::vector<int>::const_iterator pit = clusters[i].indices.begin ();
+	clusters_file << *pit;
+	for (; pit != clusters[i].indices.end (); ++pit)
+	    clusters_file << " " << *pit;
+	clusters_file << std::endl;
+	}
+	clusters_file.close ();
+    }
+    
 
     return 0;
 }

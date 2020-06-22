@@ -8,6 +8,8 @@ using namespace std;
 using namespace cv;
 
 LineDetection3D::LineDetection3D() : pointData(new pcl::PointCloud<PointT>())
+                                   , planePoints(new pcl::PointCloud<PointT>())
+
 {
 }
 
@@ -37,6 +39,24 @@ void LineDetection3D::run( pcl::PointCloud<PointT>::Ptr data, int k, std::vector
 	timer.PrintElapsedTimeMsg(msg);
 	printf("  Point Cloud Segmentation Time: %s.\n\n", msg);
 	ts.push_back(timer.GetElapsedSeconds());
+
+	for (int i=0; i<regions.size(); ++i)
+	{
+	    std::vector<int> region = regions[i];
+	    for (int j=0; j<region.size(); ++j)
+	    {
+                int idx = region[j];
+		
+		PointT pt;
+		pt.x = pointData->points[idx].x; 
+		pt.y = pointData->points[idx].y; 
+		pt.z = pointData->points[idx].z;
+		
+		float intensity = float(i+1) / float(regions.size());		
+		pt.intensity = float(i+1) / float(regions.size());
+		planePoints->push_back(pt);
+	    }
+	}
 
 	// step2: plane based 3D line detection
 	timer.Start();
@@ -69,7 +89,7 @@ void LineDetection3D::pointCloudSegmentation( std::vector<std::vector<int> > &re
     pcaer.Ori_PCA( this->pointData, this->k, this->pcaInfos, this->scale, this->magnitd );
     
     cout<<"----- Region Growing ..."<<endl;
-    double thAngle = 15.0/180.0*CV_PI;
+    double thAngle = 30.0/180.0*CV_PI;
     regionGrow( thAngle, regions );
 
     // step3: region merging
@@ -125,7 +145,6 @@ void LineDetection3D::regionGrow( double thAngle, std::vector<std::vector<int> >
 		// judgement1: normal deviation
 		cv::Matx31d normalCur = pcaInfos[idxCur].normal;
 		double normalDev = abs(normalCur.val[0] * normalStarter.val[0] + normalCur.val[1] * normalStarter.val[1] + normalCur.val[2] * normalStarter.val[2]);
-		//double normalDev = abs(normalCur.val[0] * normalSeed.val[0] + normalCur.val[1] * normalSeed.val[1] + normalCur.val[2] * normalSeed.val[2]);
 		if (normalDev < thNormal) { continue;} // the angle between two vectors is more than the threshold -> drop
 
 		// judgement2: orthogonal distance
@@ -145,7 +164,7 @@ void LineDetection3D::regionGrow( double thAngle, std::vector<std::vector<int> >
 	    count ++;
 	}
 
-	if ( clusterTemp.size() > 30 ) /// only cluster with enough points could be stored
+	if ( clusterTemp.size() > 5 ) /// only cluster with enough points could be stored
 	{
 	    regions.push_back( clusterTemp );
 	}
@@ -171,7 +190,7 @@ void LineDetection3D::regionMerging( double thAngle, std::vector<std::vector<int
     for ( int i=0; i<regions.size(); ++i )
     {
 	int pointNumCur = regions[i].size();
-	pcl::PointCloud<PointT>::Ptr pointDataCur(new pcl::PointCloud<PointT>());
+	pcl::PointCloud<PointT>::Ptr pointDataCur(new pcl::PointCloud<PointT>()); // points in a region
 	for ( int j=0; j<pointNumCur; ++j )
 	{
 	    PointT pt;
@@ -188,7 +207,7 @@ void LineDetection3D::regionMerging( double thAngle, std::vector<std::vector<int
 
 	patches[i].idxAll = regions[i];
 	double scaleAvg = 0.0;
-	for ( int j=0; j<patches[i].idxIn.size(); ++j )
+	for ( int j=0; j<patches[i].idxIn.size(); ++j ) // traverse all inlier points
 	{
 	    int idx = regions[i][patches[i].idxIn[j]];
 	    patches[i].idxIn[j] = idx; /// transform the patch's inlier idx as the idx of cloud_ptr
@@ -211,21 +230,22 @@ void LineDetection3D::regionMerging( double thAngle, std::vector<std::vector<int
     }
 
     // step2: find adjacent patches
-    std::vector<std::vector<int> > patchAdjacent( patches.size() );
+    std::vector<std::vector<int> > patchAdjacent( patches.size() ); //[patches_id][neighbouring_point_id_around_this_patch]
 #pragma omp parallel for
     for ( int i=0; i<patches.size(); ++i )
     {
 	std::vector<int> patchAdjacentTemp;
-	std::vector<std::vector<int> > pointAdjacentTemp;
+	std::vector<std::vector<int> > pointAdjacentTemp; // [neighbouring_patch_id][neighbouring_point_id]
 	for ( int j=0; j<patches[i].idxIn.size(); ++j )
 	{
 	    int id = patches[i].idxIn[j];
 	    for ( int m=0; m<pcaInfos[id].idxIn.size(); ++m )
 	    {
-		int idPoint = pcaInfos[id].idxIn[m];
-		int labelPatch = label[idPoint];
+		int idPoint = pcaInfos[id].idxIn[m]; // the neighbouring point_m of point_j in the patch_i
+		int labelPatch = label[idPoint]; // the label of point_m
 		if ( labelPatch == i || labelPatch < 0 ) { continue; }
 
+		// if the neighbouring point m is not classified into the patch i
 		bool isNeighbor = false;
 		for ( int n=0; n<pcaInfos[idPoint].idxIn.size(); ++n )
 		{
@@ -236,7 +256,7 @@ void LineDetection3D::regionMerging( double thAngle, std::vector<std::vector<int
 		}
 		if ( ! isNeighbor ) { continue; }
 
-		// accept the patch as a neighbor
+		// accept the patch as a neighbor -> label patch and label i is neighbouring
 		bool isIn = false;
 		int n = 0;
 		for ( n=0; n<patchAdjacentTemp.size(); ++n )
@@ -248,11 +268,11 @@ void LineDetection3D::regionMerging( double thAngle, std::vector<std::vector<int
 		    }
 		}
 
-		if ( isIn )
+		if ( isIn ) // update one of the neighbouring patches for the patch_i
 		{
 		    pointAdjacentTemp[n].push_back( idPoint );
 		}
-		else
+		else // add a new neighbouring patch for the patch_i
 		{
 		    patchAdjacentTemp.push_back( labelPatch );
 
@@ -301,6 +321,7 @@ void LineDetection3D::regionMerging( double thAngle, std::vector<std::vector<int
 		cv::Matx31d ptSeed = patches[idxSeed].planePt;
 		double thOrtho = patches[idxSeed].scale;
 
+		// travrese all neighbouring patches around this patch
 		for ( int j=0; j<patchAdjacent[idxSeed].size(); ++j )
 		{
 		    int idxCur = patchAdjacent[idxSeed][j];

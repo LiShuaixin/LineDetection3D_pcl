@@ -50,6 +50,7 @@ public:
 	double scale, magnitd;
 	std::vector<PCAInfo> pcaInfos;
 	pcl::PointCloud<PointT>::Ptr pointData;
+	pcl::PointCloud<PointT>::Ptr planePoints;
 };
 
 #endif //_LINE_DETECTION_H_

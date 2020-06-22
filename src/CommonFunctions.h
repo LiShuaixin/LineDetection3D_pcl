@@ -7,7 +7,7 @@
 
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
-#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/random_sample.h>
 #include <pcl/common/transforms.h>
 #include <pcl/kdtree/kdtree_flann.h> // this must before opencv
 
@@ -22,6 +22,29 @@ using namespace std;
 using namespace nanoflann;
 
 typedef pcl::PointXYZI PointT;
+
+class PointCloudFunctions
+{
+public:
+    PointCloudFunctions(void){};
+    ~PointCloudFunctions(void){};
+    
+    struct CloudPointIndexIdx 
+    {
+	unsigned int idx;
+	unsigned int cloud_point_index;
+
+	CloudPointIndexIdx(unsigned int idx_, unsigned int cloud_point_index_) : idx (idx_), cloud_point_index (cloud_point_index_) {}
+	bool operator < (const CloudPointIndexIdx &p) const { return (idx < p.idx); }
+    };
+    
+    static void getMinMax3D(const pcl::PointCloud<PointT> &cloud, const std::vector<int> &indices,
+                       Eigen::Vector4f &min_pt, Eigen::Vector4f &max_pt);
+    
+    static void approximateVoxelGridFilter(pcl::PointCloud<PointT>::Ptr input_,
+					   const double& leaf_size_,
+					   pcl::PointCloud<PointT> &output);
+};
 
 class LineFunctions
 {
