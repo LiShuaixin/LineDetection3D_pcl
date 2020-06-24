@@ -8,7 +8,7 @@ using namespace std;
 using namespace cv;
 
 LineDetection3D::LineDetection3D() : pointData(new pcl::PointCloud<PointT>())
-                                   , planePoints(new pcl::PointCloud<PointT>())
+                                   , planePoints(new pcl::PointCloud<pcl::PointXYZRGB>())
 
 {
 }
@@ -20,65 +20,85 @@ LineDetection3D::~LineDetection3D()
 void LineDetection3D::run( pcl::PointCloud<PointT>::Ptr data, int k, std::vector<PLANE> &planes, 
 			   std::vector<std::vector<cv::Point3d> > &lines, std::vector<double> &ts  )
 {
-	this->pointData = data;
-	this->pointNum = data->size();
-	this->k = k;
+    this->pointData = data;
+    this->pointNum = data->size();
+    this->k = k;
 
-	// step1: point cloud segmentation
-	double totalTime = 0.0;
-	CTimer timer;
-	char msg[1024];
+    // step1: point cloud segmentation
+    double totalTime = 0.0;
+    CTimer timer;
+    char msg[1024];
 
-	timer.Start();
-	cout<<endl<<endl;
-	cout<<"Step1: Point Cloud Segmentation ..."<<endl;
-	std::vector<std::vector<int> > regions;
-	pointCloudSegmentation( regions );
-	timer.Stop();
-	totalTime += timer.GetElapsedSeconds();
-	timer.PrintElapsedTimeMsg(msg);
-	printf("  Point Cloud Segmentation Time: %s.\n\n", msg);
-	ts.push_back(timer.GetElapsedSeconds());
+    timer.Start();
+    cout<<endl<<endl;
+    cout<<"Step1: Point Cloud Segmentation ..."<<endl;
+    std::vector<std::vector<int> > regions;
+    pointCloudSegmentation( regions );
+    timer.Stop();
+    totalTime += timer.GetElapsedSeconds();
+    timer.PrintElapsedTimeMsg(msg);
+    printf("  Point Cloud Segmentation Time: %s.\n\n", msg);
+    ts.push_back(timer.GetElapsedSeconds());
 
-	for (int i=0; i<regions.size(); ++i)
+    // step2: plane based 3D line detection
+    timer.Start();
+    cout<<"Step2: Plane Based 3D LineDetection ..."<<endl;
+    planeBased3DLineDetection( regions, planes );
+    timer.Stop();
+    totalTime += timer.GetElapsedSeconds();
+    timer.PrintElapsedTimeMsg(msg);
+    printf("  Plane Based 3D LineDetection Time: %s.\n\n", msg);
+    ts.push_back(timer.GetElapsedSeconds());
+
+    // step3: post processing
+    timer.Start();
+    cout<<"Step3: Post Processing ..."<<endl;
+    postProcessing( planes, lines );
+    timer.Stop();
+    totalTime += timer.GetElapsedSeconds();
+    timer.PrintElapsedTimeMsg(msg);
+    printf("  Post Processing Time: %s.\n\n", msg);
+    ts.push_back(timer.GetElapsedSeconds());
+
+    // visualization
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_cloud;
+    if (!planes.empty ())
+    {
+	colored_cloud = (new pcl::PointCloud<pcl::PointXYZRGB>)->makeShared ();
+	
+	srand (static_cast<unsigned int> (time (0)));
+	std::vector<unsigned char> colors;
+	for (size_t i_segment = 0; i_segment < planes.size (); i_segment++)
 	{
-	    std::vector<int> region = regions[i];
-	    for (int j=0; j<region.size(); ++j)
-	    {
-                int idx = region[j];
-		
-		PointT pt;
-		pt.x = pointData->points[idx].x; 
-		pt.y = pointData->points[idx].y; 
-		pt.z = pointData->points[idx].z;
-		
-		float intensity = float(i+1) / float(regions.size());		
-		pt.intensity = float(i+1) / float(regions.size());
-		planePoints->push_back(pt);
-	    }
+	    colors.push_back (static_cast<unsigned char> (rand () % 256));
+	    colors.push_back (static_cast<unsigned char> (rand () % 256));
+	    colors.push_back (static_cast<unsigned char> (rand () % 256));
 	}
 
-	// step2: plane based 3D line detection
-	timer.Start();
-	cout<<"Step2: Plane Based 3D LineDetection ..."<<endl;
-	planeBased3DLineDetection( regions, planes );
-	timer.Stop();
-	totalTime += timer.GetElapsedSeconds();
-	timer.PrintElapsedTimeMsg(msg);
-	printf("  Plane Based 3D LineDetection Time: %s.\n\n", msg);
-	ts.push_back(timer.GetElapsedSeconds());
-
-	// step3: post processing
-	timer.Start();
-	cout<<"Step3: Post Processing ..."<<endl;
-	postProcessing( planes, lines );
-	timer.Stop();
-	totalTime += timer.GetElapsedSeconds();
-	timer.PrintElapsedTimeMsg(msg);
-	printf("  Post Processing Time: %s.\n\n", msg);
-	ts.push_back(timer.GetElapsedSeconds());
-
-	printf("Total Time: %lf.\n\n", totalTime);
+	pcl::PointCloud<PointT>::Ptr input (new pcl::PointCloud<PointT>());
+	for(size_t i_segment = 0; i_segment < planes.size (); i_segment++) 
+	{
+	    *input = planes[i_segment].points;
+	    for (size_t i_point = 0; i_point < input->points.size (); i_point++)
+	    {
+		pcl::PointXYZRGB point;
+		point.x = *(input->points[i_point].data);
+		point.y = *(input->points[i_point].data + 1);
+		point.z = *(input->points[i_point].data + 2);
+		point.r = colors[3 * i_segment];
+		point.g = colors[3 * i_segment + 1];
+		point.b = colors[3 * i_segment + 2];
+		colored_cloud->points.push_back (point);
+	    }
+	}
+    }
+    
+    colored_cloud->width = colored_cloud->size();
+    colored_cloud->height = 1;
+    colored_cloud->is_dense = true;
+    planePoints = colored_cloud;
+    
+    printf("Total Time: %lf.\n\n", totalTime);
 }
 
 
@@ -435,10 +455,13 @@ void LineDetection3D::planeBased3DLineDetection( std::vector<std::vector<int> > 
 	cv::Mat_<double> planePt = (cv::Mat_<double>(3,1) << patches[i].planePt.val[0], patches[i].planePt.val[1], patches[i].planePt.val[2]);
 	cv::Mat_<double> normal  = (cv::Mat_<double>(3,1) << patches[i].normal.val[0], patches[i].normal.val[1], patches[i].normal.val[2]);
 
+	pcl::PointCloud<PointT>::Ptr pointsAll(new pcl::PointCloud<PointT>());
 	for(int j=0; j<patches[i].idxAll.size(); ++j)
 	{
 	    int id = patches[i].idxAll[j];
 	    cv::Mat_<double> pt3d = (cv::Mat_<double>(3,1) << pointData->points[id].x, pointData->points[id].y, pointData->points[id].z );
+	    PointT pt = pointData->points[id]; 
+	    pointsAll->push_back(pt);
 
 	    cv::Mat_<double> v3d = pt3d - planePt;
 	    cv::Mat_<double> vOrtho = v3d.dot(normal) * normal;
@@ -460,14 +483,15 @@ void LineDetection3D::planeBased3DLineDetection( std::vector<std::vector<int> > 
 		ptScales.push_back(pcaInfos[id].scale);
 	    }
 	}
+	planes[i].points = *pointsAll;
 
-	// A. 3D-2D Projection: get the side length of the grid cell
+	// A.1 3D-2D Projection: get the side length of the grid cell
 	double gridSideLength = 0;
 	std::sort( ptScales.begin(), ptScales.end(), [](const double& lhs, const double& rhs) { return lhs < rhs; } );
 	int idxNinety = min( int(double(ptScales.size()) * 0.9), int(ptScales.size()-1) );
 	gridSideLength = ptScales[idxNinety] * 0.75;
 
-	// A. 3D-2D Projection: get the binary image of the plane
+	// A.2 3D-2D Projection: get the binary image of the plane
 	double xmin, ymin, xmax, ymax;
 	int margin = 0;
 	cv::Mat mask;
@@ -625,6 +649,9 @@ void LineDetection3D::outliersRemoval( std::vector<PLANE> &planes )
 	std::vector<std::pair<int, double> > lineInfos;
 	std::vector<std::vector<double> > lengths(planes[i].lines3d.size());
 	std::vector<std::vector<cv::Mat> > orients(planes[i].lines3d.size());
+	
+	pcl::PointCloud<PointT>::Ptr pointsAll(new pcl::PointCloud<PointT>());
+	*pointsAll = planes[i].points;
 
 	double totalLength = 0.0;
 	int count = 0;
@@ -795,6 +822,7 @@ void LineDetection3D::outliersRemoval( std::vector<PLANE> &planes )
 
 	if (planeNew.lines3d.size())
 	{
+	    planeNew.points = *pointsAll;
 	    planes[i] = planeNew;
 	    isPlaneGood[i] = 1;
 	}

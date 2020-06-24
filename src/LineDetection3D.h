@@ -8,6 +8,7 @@ struct PLANE
 {
     double scale;
     std::vector<std::vector<std::vector<cv::Point3d> > > lines3d;
+    pcl::PointCloud<PointT> points;
 
     PLANE &operator =(const PLANE &info)
     {
@@ -45,12 +46,16 @@ public:
 	void lineMerging( std::vector<PLANE> &planes, std::vector<std::vector<cv::Point3d> > &lines );
 
 public:
+        /// point based parameters
 	int k;
 	int pointNum;
 	double scale, magnitd;
 	std::vector<PCAInfo> pcaInfos;
 	pcl::PointCloud<PointT>::Ptr pointData;
-	pcl::PointCloud<PointT>::Ptr planePoints;
+	pcl::PointCloud<pcl::PointXYZRGB>::Ptr planePoints;
+	
+	/// voxel based parameters
+	std::vector<VoxelInfo> voxelInfos;
 };
 
 #endif //_LINE_DETECTION_H_

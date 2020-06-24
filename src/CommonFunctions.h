@@ -5,14 +5,22 @@
 #include <Eigen/Dense>
 #include <Eigen/Core>
 
+#include <pcl/features/normal_3d.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/segmentation/region_growing.h>
+#include <pcl/kdtree/kdtree.h>
+#include <pcl/common/time.h>
+#include <pcl/console/parse.h>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 #include <pcl/filters/random_sample.h>
 #include <pcl/common/transforms.h>
+#include <pcl/octree/octree.h>
 #include <pcl/kdtree/kdtree_flann.h> // this must before opencv
 
 #include <opencv2/opencv.hpp>
 #include <vector>
+#include <math.h>
 
 #include "nanoflann.hpp"
 #include "utils.h"
@@ -73,7 +81,29 @@ struct PCAInfo
 	this->normal = info.normal;
 	this->idxIn = info.idxIn;
 	this->idxAll = info.idxAll;
-	this->scale = scale;
+	this->scale = info.scale;
+	return *this;
+    }
+};
+
+struct VoxelInfo
+{
+    
+    double lambda0, scale, alpha1d, alpha2d, alpha3d, Ef;
+    cv::Matx31d normal, planePt;
+    std::vector<int> idxAll, idxIn;
+
+    VoxelInfo &operator =(const VoxelInfo &info)
+    {
+	this->lambda0 = info.lambda0;
+	this->normal = info.normal;
+	this->idxIn = info.idxIn;
+	this->idxAll = info.idxAll;
+	this->scale = info.scale;
+	this->alpha1d = info.alpha1d;
+	this->alpha2d = info.alpha2d;
+	this->alpha3d = info.alpha3d;
+	this->Ef = info.Ef;
 	return *this;
     }
 };
