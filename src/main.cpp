@@ -2,6 +2,7 @@
 #include <fstream>
 
 #include "LineDetection3D.h"
+#include "PlaneDetection.h"
 #include "nanoflann.hpp"
 #include "utils.h"
 #include "Timer.h"
@@ -159,6 +160,10 @@ int main(int argc, char** argv)
 	std::cout << "Total num of points after downsampling: " << pointData->size() << "\n";	
     }
 
+    PlaneDetection test;
+    test.runPlaneExtraction_OBR(pointData, 30.0, 0.05);
+    std::printf("test done.\n");
+    
     int k = 30;
     LineDetection3D detector;
     std::vector<PLANE> planes;

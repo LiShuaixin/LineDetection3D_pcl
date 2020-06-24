@@ -2,21 +2,29 @@
 #define _COMMON_FUNCTIONS_
 #pragma once
 
+#include <tbb/tbb.h>
+
 #include <Eigen/Dense>
 #include <Eigen/Core>
 
-#include <pcl/features/normal_3d.h>
-#include <pcl/io/pcd_io.h>
-#include <pcl/segmentation/region_growing.h>
-#include <pcl/kdtree/kdtree.h>
 #include <pcl/common/time.h>
 #include <pcl/console/parse.h>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
-#include <pcl/filters/random_sample.h>
+
+#include <pcl/io/pcd_io.h>
 #include <pcl/common/transforms.h>
-#include <pcl/octree/octree.h>
+
+#include <pcl/features/normal_3d.h>
+
+#include <pcl/kdtree/kdtree.h>
 #include <pcl/kdtree/kdtree_flann.h> // this must before opencv
+#include <pcl/octree/octree.h>
+#include <pcl/octree/octree_impl.h>
+#include <pcl/octree/octree_pointcloud_adjacency.h>
+
+#include <pcl/filters/random_sample.h>
+#include <pcl/segmentation/region_growing.h>
 
 #include <opencv2/opencv.hpp>
 #include <vector>
@@ -89,23 +97,36 @@ struct PCAInfo
 struct VoxelInfo
 {
     
-    double lambda0, scale, alpha1d, alpha2d, alpha3d, Ef;
-    cv::Matx31d normal, planePt;
+    double curvature, residual, alpha1d, alpha2d, alpha3d, sEntr /* the smaller the flatter*/;
+    cv::Matx31d normal, mean; 
+    cv::Matx33d cov; 
     std::vector<int> idxAll, idxIn;
+    
+    bool blocked;
 
     VoxelInfo &operator =(const VoxelInfo &info)
     {
-	this->lambda0 = info.lambda0;
+	this->curvature = info.curvature;
 	this->normal = info.normal;
+	this->mean = info.mean;
 	this->idxIn = info.idxIn;
 	this->idxAll = info.idxAll;
-	this->scale = info.scale;
+	this->residual = info.residual;
 	this->alpha1d = info.alpha1d;
 	this->alpha2d = info.alpha2d;
 	this->alpha3d = info.alpha3d;
-	this->Ef = info.Ef;
+	this->sEntr = info.sEntr;
+	this->cov = info.cov;
 	return *this;
     }
+};
+
+struct SegmentInfo
+{
+    cv::Matx31d normal, mean; 
+    cv::Matx33d cov; 
+   
+    std::vector<VoxelInfo> voxelAll; // voxels in this segment
 };
 
 class PCAFunctions 
