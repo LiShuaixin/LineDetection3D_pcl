@@ -148,7 +148,7 @@ int main(int argc, char** argv)
     }
 
     /// random downsize
-    int maxSize = 800000;
+    int maxSize = 500000;
     if (pointData->size() > maxSize) {
 	pcl::RandomSample<PointT> rs;
 	rs.setInputCloud(pointData);
@@ -160,9 +160,9 @@ int main(int argc, char** argv)
 	std::cout << "Total num of points after downsampling: " << pointData->size() << "\n";	
     }
 
-    PlaneDetection test;
-    test.runPlaneExtraction_OBR(pointData, 30.0, 0.05);
-    std::printf("test done.\n");
+    /*PlaneDetection test;
+    test.runPlaneExtraction_OBR(pointData, 30.0, 0.05, 30);
+    std::printf("test done.\n")*/;
     
     int k = 30;
     LineDetection3D detector;

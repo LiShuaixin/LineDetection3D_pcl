@@ -21,10 +21,11 @@
 #include <pcl/kdtree/kdtree_flann.h> // this must before opencv
 #include <pcl/octree/octree.h>
 #include <pcl/octree/octree_impl.h>
-#include <pcl/octree/octree_pointcloud_adjacency.h>
 
 #include <pcl/filters/random_sample.h>
 #include <pcl/segmentation/region_growing.h>
+
+#include <OctreePointcloudVoxel.hpp>
 
 #include <opencv2/opencv.hpp>
 #include <vector>
@@ -102,7 +103,9 @@ struct VoxelInfo
     cv::Matx33d cov; 
     std::vector<int> idxAll, idxIn;
     
-    bool blocked;
+    bool blocked, allocated;
+    
+    pcl::octree::LeafNodeKey keyArg;
 
     VoxelInfo &operator =(const VoxelInfo &info)
     {
@@ -143,5 +146,4 @@ public:
 
     double meadian( std::vector<double> dataset );
 };
-
 #endif //_COMMON_FUNCTIONS_
