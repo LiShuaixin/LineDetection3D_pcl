@@ -1,10 +1,13 @@
 # 3DLineDetection
 A simple and efficient 3D line detection algorithm for large scale unorganized point cloud. A conference paper based on this code can be found here https://arxiv.org/abs/1901.02532
 
+This is a modified version that applied PCL to facilitate the incorporation of ROS project. 
+
 Prerequisites:
 ---
 1. OpenCV > 2.4.x
 2. OpenMP
+3. PCL >= 1.7
 3. No other libs
 
 Usage:
@@ -35,3 +38,7 @@ journal={arXiv preprint arXiv:1901.02532},
 year={2019},
 }
 ```
+
+TODO:
+---
+This project is a point-based region growing approach which is slower than the octree-based region growing (OBRG) approches. The OBRG version will be release later
