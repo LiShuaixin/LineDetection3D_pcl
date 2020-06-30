@@ -21,8 +21,6 @@ Performance:
 On a computer with Intel Core i5-3550p CPU, the computing time for point clouds with 30M, 20M, 10M, 5M, 2M and 1M points is 130s, 80s, 40s, 20s, 8s and 4s, respectively.
 ![image](https://github.com/xiaohulugo/images/blob/master/3DLineDetection.jpg)
 
-Feel free to correct my code, if you spotted the mistakes. You are also welcomed to Email me: fangzelu@gmail.com
-
 Notice: Basically, this code works well for dense and accurate point clouds, while poor for noisy ones.
 ---
 
@@ -42,3 +40,6 @@ year={2019},
 TODO:
 ---
 This project is a point-based region growing approach which is slower than the octree-based region growing (OBRG) approches. The OBRG version will be release later
+
+
+You are also welcomed to Email me: lsxnavigation@gmail.com, or create a issue. 
