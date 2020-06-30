@@ -9,6 +9,8 @@ using namespace cv;
 
 LineDetection3D::LineDetection3D() : pointData(new pcl::PointCloud<PointT>())
                                    , planePoints(new pcl::PointCloud<pcl::PointXYZRGB>())
+				   , planeNormals(new pcl::PointCloud<pcl::Normal>())
+				   , planeCentroid(new pcl::PointCloud<pcl::PointXYZ>())
 
 {
 }
@@ -59,12 +61,104 @@ void LineDetection3D::run( pcl::PointCloud<PointT>::Ptr data, int k, std::vector
     timer.PrintElapsedTimeMsg(msg);
     printf("  Post Processing Time: %s.\n\n", msg);
     ts.push_back(timer.GetElapsedSeconds());
+    
+    // update plane property
+    double MINVALUE = 1e-8;
+    for (int i=0; i<planes.size(); ++i)
+    {
+	PLANE &structured_plane = planes[i];
+	pcl::PointCloud<PointT>::Ptr points = structured_plane.points.makeShared();
+	int points_num = points->size();
+	
+	// Mean
+	Eigen::Vector3d mean(0.0, 0.0, 0.0);
+	for (auto point : points->points)
+	{
+	    Eigen::Vector3d pi(point.getVector3fMap().template cast<double>());
+	    mean += pi;
+	}
+	mean /= points_num;
+	structured_plane.mean = mean;
+	
+	// Covariance
+	Eigen::Matrix3d cov = Eigen::Matrix3d::Zero();
+	for (auto point : points->points)
+	{
+	    Eigen::Vector3d pi(point.x, point.y, point.z);
+	    Eigen::Vector3d diff = pi - mean;
+	    cov += diff * diff.transpose();
+	}
+	cov /= points_num;
+	structured_plane.covariance = cov;
+	
+	// Norm in plane frame and Curvature
+	Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> saes(cov); //PCA
 
+	/// \note Eigen library sort eigenvalues in increasing order
+	Eigen::Vector3d unit_norm_in_plane = saes.eigenvectors().col(0);
+	double t = fabs(saes.eigenvalues()[2]) + fabs(saes.eigenvalues()[1]) + fabs(saes.eigenvalues()[0]) + ( rand()%10 + 1 ) * MINVALUE;
+	double curvature = fabs(saes.eigenvalues()[0]) / t;
+	structured_plane.curvature = curvature;
+ 
+	// Residual 
+	double res_square_sum = 0.0;
+	for ( auto point : points->points )
+	{
+	    Eigen::Vector3d pi(point.getVector3fMap().template cast<double>());
+	    double res = (( pi - mean ).transpose() * unit_norm_in_plane)(0);
+	    double res_square = fabs(res * res);
+	    res_square_sum += res_square;
+	}
+	double residual = sqrt(res_square_sum / (points_num + MINVALUE));
+	structured_plane.residual = residual;
+	structured_plane.norm_test = unit_norm_in_plane;
+	
+	// Norm in lidar frame
+	Eigen::MatrixXd matA0(points_num, 3);
+	Eigen::VectorXd matB0 = -1 * Eigen::VectorXd::Ones(points_num);
+	for (int j = 0; j < points_num; j++)
+	{
+	    PointT point = points->points[j];
+
+	    matA0(j, 0) = point.x;
+	    matA0(j, 1) = point.y;
+	    matA0(j, 2) = point.z;
+	    //printf(" pts %f %f %f ", matA0(j, 0), matA0(j, 1), matA0(j, 2));
+	}
+	
+	// find the norm of plane
+	Eigen::Vector3d norm_in_lidar = matA0.colPivHouseholderQr().solve(matB0);
+	double negative_OA_dot_norm = 1 / norm_in_lidar.norm();
+	norm_in_lidar.normalize();
+	structured_plane.norm = norm_in_lidar;
+	structured_plane.negative_OA_dot_norm = negative_OA_dot_norm;
+
+	// Here n(pa, pb, pc) is unit norm of plane
+	bool valid = true;
+	for (int j = 0; j < points_num; j++)
+	{
+	    PointT point = points->points[j];
+	    
+	    // if OX * n > 0.2, then plane is not fit well
+	    if (std::fabs(norm_in_lidar(0) * point.x + norm_in_lidar(1) * point.y +
+			  norm_in_lidar(2) * point.z + negative_OA_dot_norm) > 0.2)
+	    {
+		valid = false;
+		break;
+	    }
+	}
+	structured_plane.valid = valid;
+    }
+    
     // visualization
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_cloud;
+    pcl::PointCloud<pcl::Normal>::Ptr normal_cloud;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr centroid_cloud;
     if (!planes.empty ())
     {
 	colored_cloud = (new pcl::PointCloud<pcl::PointXYZRGB>)->makeShared ();
+	normal_cloud = (new pcl::PointCloud<pcl::Normal>)->makeShared ();
+	centroid_cloud = (new pcl::PointCloud<pcl::PointXYZ>)->makeShared ();
 	
 	srand (static_cast<unsigned int> (time (0)));
 	std::vector<unsigned char> colors;
@@ -75,6 +169,8 @@ void LineDetection3D::run( pcl::PointCloud<PointT>::Ptr data, int k, std::vector
 	    colors.push_back (static_cast<unsigned char> (rand () % 256));
 	}
 
+	planeNormals->clear();
+	planeCentroid->clear();
 	pcl::PointCloud<PointT>::Ptr input (new pcl::PointCloud<PointT>());
 	for(size_t i_segment = 0; i_segment < planes.size (); i_segment++) 
 	{
@@ -90,6 +186,38 @@ void LineDetection3D::run( pcl::PointCloud<PointT>::Ptr data, int k, std::vector
 		point.b = colors[3 * i_segment + 2];
 		colored_cloud->points.push_back (point);
 	    }
+	    
+	    pcl::Normal norm; 
+	    norm.normal_x = planes[i_segment].norm.x();
+	    norm.normal_y = planes[i_segment].norm.y();
+	    norm.normal_z = planes[i_segment].norm.z();
+	    /// norm.curvature = planes[i_segment].curvature;
+            planeNormals->push_back(norm);    
+// 	    
+	    pcl::PointXYZ centroid; 
+	    centroid.x = planes[i_segment].mean.x();
+	    centroid.y = planes[i_segment].mean.y();
+	    centroid.z = planes[i_segment].mean.z();
+            planeCentroid->push_back(centroid);
+	    
+	    
+// 	    pcl::NormalEstimation<PointT, pcl::Normal> n;
+// 	    Eigen::Vector4f plane_parameters;
+// 	    float curv = 0.0;
+// 	    std::vector<int> indices(input->size());
+// 	    for (int i=0; i<indices.size(); ++i)
+// 		indices[i] = i;
+// 
+// 	    n.computePointNormal(*input, indices, plane_parameters, curv);
+// 	    planes[i_segment].norm = Eigen::Vector3d(plane_parameters(0), plane_parameters(1), plane_parameters(2));
+// 	    planes[i_segment].negative_OA_dot_norm = plane_parameters(3);
+// 	    planes[i_segment].curvature = curv;
+// 	    
+// 	    pcl::Normal norm(plane_parameters(0), plane_parameters(1), plane_parameters(2)); 
+// 	    norm.curvature = curv;
+// 	    planeNormals->push_back(norm);
+	    
+	    
 	}
     }
     

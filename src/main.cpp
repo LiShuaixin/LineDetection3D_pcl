@@ -177,6 +177,58 @@ int main(int argc, char** argv)
     writeOutLines( fileOut, lines, detector.scale );
     pcl::io::savePCDFile(fileOut + "planes.pcd", *detector.planePoints);
 
+    pcl::visualization::PCLVisualizer viewer("PCL Viewer");
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr colored_cloud(new pcl::PointCloud<pcl::PointXYZRGB>());
+    
+    srand (static_cast<unsigned int> (time (0)));
+    std::vector<unsigned char> colors;
+    for (size_t i_segment = 0; i_segment < planes.size (); i_segment++)
+    {
+	colors.push_back (static_cast<unsigned char> (rand () % 256));
+	colors.push_back (static_cast<unsigned char> (rand () % 256));
+	colors.push_back (static_cast<unsigned char> (rand () % 256));
+    }
+	
+    pcl::PointCloud<PointT>::Ptr input (new pcl::PointCloud<PointT>());
+    for(size_t i_segment = 0; i_segment < planes.size (); i_segment++) 
+    {
+	std::cout << "the " << i_segment << "th plane is displied!" << std::endl;
+	input->clear();
+	
+	*input = planes[i_segment].points;
+	for (size_t i_point = 0; i_point < input->points.size (); i_point++)
+	{
+	    pcl::PointXYZRGB point;
+	    point.x = *(input->points[i_point].data);
+	    point.y = *(input->points[i_point].data + 1);
+	    point.z = *(input->points[i_point].data + 2);
+	    point.r = colors[3 * i_segment];
+	    point.g = colors[3 * i_segment + 1];
+	    point.b = colors[3 * i_segment + 2];
+	    colored_cloud->points.push_back (point);
+	}
+	
+	pcl::PointCloud<pcl::PointXYZ>::Ptr cen_cloud(new pcl::PointCloud<pcl::PointXYZ>());
+	cen_cloud->push_back(detector.planeCentroid->points[i_segment]);
+	
+	pcl::PointCloud<pcl::Normal>::Ptr norm_cloud(new pcl::PointCloud<pcl::Normal>());
+	norm_cloud->push_back(detector.planeNormals->points[i_segment]);
+	
+	viewer.addPointCloud(colored_cloud, "cloud_plane_" + to_string(i_segment));
+	viewer.addPointCloud(cen_cloud, "cloud_centroid_" + to_string(i_segment));
+	viewer.addPointCloudNormals<pcl::PointXYZ, pcl::Normal>(cen_cloud, norm_cloud, 5, 0.5, "cloud_normals_" + to_string(i_segment));
+	
+	if (i_segment == planes.size ()-1) {
+	    while (!viewer.wasStopped())
+		viewer.spinOnce();
+	} else {
+	    viewer.spinOnce(1000);
+	}
+    }
+    
+    
+
     ///---------- PCL Region Growing ----------///
     // Estimate the normals
 //     pcl::NormalEstimation<PointT, pcl::Normal> ne;

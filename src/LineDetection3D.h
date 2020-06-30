@@ -8,12 +8,30 @@ struct PLANE
 {
     double scale;
     std::vector<std::vector<std::vector<cv::Point3d> > > lines3d;
+    
+    // for visualization and motion estimation
     pcl::PointCloud<PointT> points;
+    double curvature;
+    Eigen::Matrix3d covariance;
+    Eigen::Vector3d mean;
+    Eigen::Vector3d norm;
+    Eigen::Vector3d norm_test;
+    double negative_OA_dot_norm;
+    double residual;
+    bool valid;
+    
 
     PLANE &operator =(const PLANE &info)
     {
-	this->scale    = info.scale;
-	this->lines3d     = info.lines3d;
+	this->mean                 = info.mean;
+	this->norm                 = info.norm;
+	this->scale                = info.scale;
+	this->points               = info.points;
+	this->lines3d              = info.lines3d;
+	this->residual             = info.residual;
+	this->covariance           = info.covariance;	
+	this->negative_OA_dot_norm = info.negative_OA_dot_norm;
+		
 	return *this;
     }
 };
@@ -53,6 +71,8 @@ public:
 	std::vector<PCAInfo> pcaInfos;
 	pcl::PointCloud<PointT>::Ptr pointData;
 	pcl::PointCloud<pcl::PointXYZRGB>::Ptr planePoints;
+	pcl::PointCloud<pcl::Normal>::Ptr planeNormals;
+	pcl::PointCloud<pcl::PointXYZ>::Ptr planeCentroid;
 	
 	/// voxel based parameters
 	std::vector<VoxelInfo> voxelInfos;
